@@ -7,9 +7,14 @@ import httpx
 
 from app.config import get_settings
 from app.models import Transaction
+from app.services import link_signing_service
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _telegram_api_url(method: str) -> str:
+    return f"https://api.telegram.org/bot{settings.telegram_bot_token}/{method}"
 
 
 def _format_review_message(tx: Transaction) -> str:
@@ -20,10 +25,14 @@ def _format_review_message(tx: Transaction) -> str:
     merchant = tx.merchant or "unknown merchant"
     channel = tx.channel or "unknown"
     tail = f" ending {tx.last4}" if tx.last4 else ""
-    return f"Spent {amount} at {merchant} via {channel}{tail}. What should I do?"
+    review_link = link_signing_service.build_review_link(tx.id)
+    return (
+        f"Spent {amount} at {merchant} via {channel}{tail}. What should I do?\n"
+        f"Open form: {review_link}"
+    )
 
 
-def _build_keyboard(tx_id: str) -> dict[str, Any]:
+def _build_primary_keyboard(tx_id: str) -> dict[str, Any]:
     return {
         "inline_keyboard": [
             [
@@ -38,6 +47,57 @@ def _build_keyboard(tx_id: str) -> dict[str, Any]:
     }
 
 
+def send_text_message(
+    *,
+    text: str,
+    chat_id: str | int | None = None,
+    reply_markup: dict[str, Any] | None = None,
+) -> str | None:
+    if not settings.telegram_bot_token:
+        logger.info("Telegram bot token missing; text not sent")
+        return None
+
+    target_chat_id = str(chat_id) if chat_id is not None else settings.telegram_chat_id
+    if not target_chat_id:
+        logger.info("Telegram chat id missing; text not sent")
+        return None
+
+    payload: dict[str, Any] = {
+        "chat_id": target_chat_id,
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+
+    try:
+        response = httpx.post(_telegram_api_url("sendMessage"), json=payload, timeout=8.0)
+        response.raise_for_status()
+        data = response.json()
+        message_id = data.get("result", {}).get("message_id")
+        return str(message_id) if message_id is not None else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Telegram sendMessage failed: %s", exc)
+        return None
+
+
+def answer_callback_query(callback_query_id: str, text: str | None = None) -> None:
+    if not settings.telegram_bot_token:
+        return
+
+    payload: dict[str, Any] = {
+        "callback_query_id": callback_query_id,
+    }
+    if text:
+        payload["text"] = text
+
+    try:
+        response = httpx.post(_telegram_api_url("answerCallbackQuery"), json=payload, timeout=5.0)
+        response.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Telegram answerCallbackQuery failed: %s", exc)
+
+
 def send_review_prompt(tx: Transaction) -> str:
     message = _format_review_message(tx)
 
@@ -45,19 +105,9 @@ def send_review_prompt(tx: Transaction) -> str:
         logger.info("Telegram credentials missing; prompt not sent for tx=%s", tx.id)
         return f"local-{tx.id}"
 
-    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
-    payload = {
-        "chat_id": settings.telegram_chat_id,
-        "text": message,
-        "reply_markup": _build_keyboard(tx.id),
-    }
-
-    try:
-        response = httpx.post(url, json=payload, timeout=5.0)
-        response.raise_for_status()
-        data = response.json()
-        message_id = data.get("result", {}).get("message_id")
-        return str(message_id) if message_id is not None else f"remote-{tx.id}"
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Telegram send failed for tx=%s: %s", tx.id, exc)
-        return f"failed-{tx.id}"
+    message_id = send_text_message(
+        text=message,
+        chat_id=settings.telegram_chat_id,
+        reply_markup=_build_primary_keyboard(tx.id),
+    )
+    return message_id if message_id is not None else f"failed-{tx.id}"

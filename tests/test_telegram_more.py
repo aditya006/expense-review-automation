@@ -71,4 +71,4 @@ def test_telegram_actions_ignore_draft_choose_group(client, db_session: Session)
         json={"callback_query": {"data": f"tx|{tx_id_3}|choose_group"}},
     )
     assert with_group.status_code == 200
-    assert "goa trip" in with_group.json()["message"].lower()
+    assert "group options" in with_group.json()["message"].lower()

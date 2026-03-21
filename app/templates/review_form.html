@@ -12,7 +12,7 @@
         background: #f6f7fb;
       }
       .card {
-        max-width: 640px;
+        max-width: 680px;
         margin: 0 auto;
         background: #fff;
         border-radius: 12px;
@@ -44,6 +44,10 @@
         gap: 0.5rem;
         margin-top: 1rem;
       }
+      .status {
+        margin-top: 0.8rem;
+        font-size: 0.95rem;
+      }
     </style>
   </head>
   <body>
@@ -55,25 +59,68 @@
         Status: {{ transaction.status }}
       </p>
 
-      <form method="post">
-        <label>Description</label>
-        <input type="text" name="description" value="{{ transaction.merchant or '' }}" />
+      <label>Amount (INR)</label>
+      <input id="amount" type="number" value="{{ "%.2f"|format((transaction.amount_minor or 0) / 100) }}" step="0.01" />
 
-        <label>Group</label>
-        <select name="group_id">
-          <option value="">Select a group</option>
-          {% for group in groups %}
-          <option value="{{ group.group_id }}">{{ group.group_name }}</option>
-          {% endfor %}
-        </select>
+      <label>Description</label>
+      <input id="description" type="text" value="{{ transaction.merchant or '' }}" />
 
-        <label>Notes</label>
-        <textarea name="notes"></textarea>
+      <label>Group</label>
+      <select id="group_id">
+        <option value="">Select a group</option>
+        {% for group in groups %}
+        <option value="{{ group.group_id }}">{{ group.group_name }}</option>
+        {% endfor %}
+      </select>
 
-        <div class="actions">
-          <button type="submit" formaction="{{ request.url.path }}" formmethod="post">Post to Splitwise</button>
-        </div>
-      </form>
+      <label>Participants (comma-separated IDs)</label>
+      <input id="participants" type="text" placeholder="u1,u2,u3" />
+
+      <label>Split Mode</label>
+      <select id="split_mode">
+        <option value="equal">Equal</option>
+        <option value="custom">Custom</option>
+      </select>
+
+      <label>Notes</label>
+      <textarea id="notes"></textarea>
+
+      <div class="actions">
+        <button onclick="submitAction('post')">Post to Splitwise</button>
+        <button onclick="submitAction('draft')">Save Draft</button>
+        <button onclick="submitAction('manually_done')">Mark Manually Done</button>
+        <button onclick="submitAction('ignore')">Ignore</button>
+      </div>
+
+      <div id="status" class="status"></div>
     </div>
+
+    <script>
+      async function submitAction(action) {
+        const participantsRaw = document.getElementById('participants').value.trim();
+        const participant_ids = participantsRaw
+          ? participantsRaw.split(',').map((x) => x.trim()).filter(Boolean)
+          : [];
+
+        const payload = {
+          group_id: document.getElementById('group_id').value || null,
+          participant_ids,
+          split_mode: document.getElementById('split_mode').value,
+          description: document.getElementById('description').value || null,
+          notes: document.getElementById('notes').value || null,
+          action,
+        };
+
+        const url = `${window.location.pathname}?t={{ review_token }}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await response.json();
+        document.getElementById('status').innerText = data.detail || JSON.stringify(data);
+      }
+    </script>
   </body>
 </html>

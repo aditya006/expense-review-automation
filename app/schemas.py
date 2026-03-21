@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class IosSmsIngestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     sender: str = Field(min_length=2, max_length=64)
     contact_name: str | None = Field(default=None, max_length=128)
     message: str = Field(min_length=5)
@@ -22,6 +24,8 @@ class IngestResponse(BaseModel):
 
 
 class ReviewSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     group_id: str | None = None
     participant_ids: list[str] = Field(default_factory=list)
     split_mode: Literal["equal", "custom"] = "equal"

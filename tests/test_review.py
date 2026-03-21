@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services import link_signing_service
+
 
 def _ingest(client):
     payload = {
@@ -16,6 +18,7 @@ def _ingest(client):
 
 def test_review_draft_action(client) -> None:
     tx_id = _ingest(client)
+    token = link_signing_service.create_review_token(tx_id)
 
     review = {
         "group_id": "group_1",
@@ -25,7 +28,7 @@ def test_review_draft_action(client) -> None:
         "notes": "Draft this",
         "action": "draft",
     }
-    resp = client.post(f"/review/{tx_id}", json=review)
+    resp = client.post(f"/review/{tx_id}?t={token}", json=review)
 
     assert resp.status_code == 200
     data = resp.json()
@@ -34,6 +37,7 @@ def test_review_draft_action(client) -> None:
 
 def test_review_post_without_token_falls_back_to_draft(client) -> None:
     tx_id = _ingest(client)
+    token = link_signing_service.create_review_token(tx_id)
 
     review = {
         "group_id": "group_1",
@@ -43,7 +47,7 @@ def test_review_post_without_token_falls_back_to_draft(client) -> None:
         "notes": "Post attempt",
         "action": "post",
     }
-    resp = client.post(f"/review/{tx_id}", json=review)
+    resp = client.post(f"/review/{tx_id}?t={token}", json=review)
 
     assert resp.status_code == 200
     data = resp.json()

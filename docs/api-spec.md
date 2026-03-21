@@ -3,6 +3,7 @@
 ## Endpoint: `POST /ingest/ios-sms`
 Purpose:
 - intake endpoint called by iPhone Shortcut
+- authenticated via `X-Ingest-Key` (or bearer token fallback)
 
 Request body:
 ```json
@@ -32,9 +33,13 @@ Behavior:
 - store transaction
 - queue Telegram notification
 
+Required header in secure mode:
+- `X-Ingest-Key: <INGEST_API_KEY>`
+
 ## Endpoint: `POST /telegram/webhook`
 Purpose:
 - receive Telegram messages and inline button callbacks
+- verify Telegram webhook secret header (`X-Telegram-Bot-Api-Secret-Token`)
 
 Handles:
 - `/start`
@@ -46,6 +51,7 @@ Handles:
 ## Endpoint: `GET /review/{transaction_id}`
 Purpose:
 - render mobile review form for complex edits
+- requires signed token query parameter `?t=<signed_token>`
 
 Displays:
 - parsed merchant
@@ -60,6 +66,7 @@ Displays:
 ## Endpoint: `POST /review/{transaction_id}`
 Purpose:
 - save manual review changes or post to Splitwise
+- requires signed token query parameter `?t=<signed_token>` or admin key override
 
 Request body:
 ```json

@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from app.db import Base
 from app.models import Transaction
 from app.services import dedupe_service, parser_service, splitwise_service, telegram_service
 
@@ -80,29 +84,53 @@ def test_telegram_service_local_fallback() -> None:
 
 
 def test_splitwise_create_expense_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SessionLocal = sessionmaker(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
     monkeypatch.setattr(splitwise_service.settings, "splitwise_access_token", "token123")
 
     def mock_post(*args, **kwargs):  # noqa: ANN002, ANN003
         return _MockResponse({"expenses": [{"id": "sw123"}]})
 
     monkeypatch.setattr(splitwise_service.httpx, "post", mock_post)
-    result = splitwise_service.create_expense({"description": "Dinner", "cost": 500})
-    assert result.ok is True
-    assert result.expense_id == "sw123"
+    try:
+        result = splitwise_service.create_expense(db, {"description": "Dinner", "cost": 500})
+        assert result.ok is True
+        assert result.expense_id == "sw123"
+    finally:
+        db.close()
+        engine.dispose()
 
 
 def test_splitwise_create_expense_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SessionLocal = sessionmaker(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
     monkeypatch.setattr(splitwise_service.settings, "splitwise_access_token", "token123")
 
     def mock_post(*args, **kwargs):  # noqa: ANN002, ANN003
         raise RuntimeError("network down")
 
     monkeypatch.setattr(splitwise_service.httpx, "post", mock_post)
-    result = splitwise_service.create_expense({"description": "Dinner", "cost": 500})
-    assert result.ok is False
+    try:
+        result = splitwise_service.create_expense(db, {"description": "Dinner", "cost": 500})
+        assert result.ok is False
+    finally:
+        db.close()
+        engine.dispose()
 
 
 def test_splitwise_auth_url() -> None:
-    url = splitwise_service.authorization_url()
+    url = splitwise_service.authorization_url("state123")
     assert "oauth/authorize" in url
     assert "response_type=code" in url

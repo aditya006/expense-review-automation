@@ -2,23 +2,48 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models
+from app.config import get_settings
 from app.db import get_db
 from app.schemas import ActionResponse, ReviewSubmitRequest
-from app.services import splitwise_service, transaction_service
+from app.services import link_signing_service, splitwise_service, transaction_service
 
 router = APIRouter(prefix="/review", tags=["review"])
 templates = Jinja2Templates(directory="app/templates")
+settings = get_settings()
+
+
+def _authorized_review_access(
+    transaction_id: str,
+    token: str | None,
+    admin_key: str | None,
+) -> bool:
+    if token and link_signing_service.verify_review_token(transaction_id, token):
+        return True
+
+    if settings.admin_api_key and admin_key == settings.admin_api_key:
+        return True
+
+    return False
 
 
 @router.get("/{transaction_id}", response_class=HTMLResponse)
-def review_form(transaction_id: str, request: Request, db: Session = Depends(get_db)):
+def review_form(
+    transaction_id: str,
+    request: Request,
+    t: str | None = Query(default=None),
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
+    db: Session = Depends(get_db),
+):
+    if not _authorized_review_access(transaction_id, t, x_admin_key):
+        raise HTTPException(status_code=401, detail="Invalid or expired review link")
+
     tx = transaction_service.get_transaction(db, transaction_id)
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -30,6 +55,7 @@ def review_form(transaction_id: str, request: Request, db: Session = Depends(get
         context={
             "transaction": tx,
             "groups": groups,
+            "review_token": t,
         },
     )
 
@@ -38,8 +64,13 @@ def review_form(transaction_id: str, request: Request, db: Session = Depends(get
 def submit_review(
     transaction_id: str,
     payload: ReviewSubmitRequest,
+    t: str | None = Query(default=None),
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
     db: Session = Depends(get_db),
 ) -> ActionResponse:
+    if not _authorized_review_access(transaction_id, t, x_admin_key):
+        raise HTTPException(status_code=401, detail="Invalid or expired review link")
+
     tx = transaction_service.get_transaction(db, transaction_id)
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -121,7 +152,7 @@ def submit_review(
         "custom_amounts_minor": payload.custom_amounts_minor,
     }
 
-    result = splitwise_service.create_expense(splitwise_payload)
+    result = splitwise_service.create_expense(db, splitwise_payload)
 
     if result.ok:
         tx.status = "posted"

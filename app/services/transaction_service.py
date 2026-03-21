@@ -138,3 +138,20 @@ def list_pending_transactions(db: Session, limit: int = 25) -> list[models.Trans
         .limit(limit)
     )
     return list(db.scalars(stmt).all())
+
+
+def upsert_group_cache(db: Session, *, group_id: str, group_name: str, members_json: str) -> None:
+    existing = db.scalar(select(models.GroupCache).where(models.GroupCache.group_id == group_id))
+    if existing:
+        existing.group_name = group_name
+        existing.members_json = members_json
+        db.add(existing)
+    else:
+        db.add(
+            models.GroupCache(
+                group_id=group_id,
+                group_name=group_name,
+                members_json=members_json,
+            )
+        )
+    db.commit()

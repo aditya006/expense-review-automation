@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.schemas import IngestResponse, IosSmsIngestRequest
+from app.security import verify_ingest_api_key
 from app.services import parser_service, telegram_service, transaction_service
 from app.services.dedupe_service import compute_dedupe_key, normalize_message
 
@@ -12,7 +13,11 @@ router = APIRouter(prefix="/ingest", tags=["ingest"])
 
 
 @router.post("/ios-sms", response_model=IngestResponse)
-def ingest_ios_sms(payload: IosSmsIngestRequest, db: Session = Depends(get_db)) -> IngestResponse:
+def ingest_ios_sms(
+    payload: IosSmsIngestRequest,
+    _: None = Depends(verify_ingest_api_key),
+    db: Session = Depends(get_db),
+) -> IngestResponse:
     parse_result = parser_service.parse_sms(
         sender=payload.sender,
         message=payload.message,
