@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Expense Review</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        padding: 1rem;
+        background: #f6f7fb;
+      }
+      .card {
+        max-width: 640px;
+        margin: 0 auto;
+        background: #fff;
+        border-radius: 12px;
+        padding: 1rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      }
+      .meta {
+        color: #555;
+        margin-bottom: 1rem;
+      }
+      label {
+        display: block;
+        margin-top: 0.8rem;
+        font-weight: 600;
+      }
+      input,
+      select,
+      textarea,
+      button {
+        width: 100%;
+        margin-top: 0.3rem;
+        padding: 0.6rem;
+        border-radius: 8px;
+        border: 1px solid #d4d8e3;
+        font-size: 1rem;
+      }
+      .actions {
+        display: grid;
+        gap: 0.5rem;
+        margin-top: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Review Expense</h1>
+      <p class="meta">
+        Amount: Rs {{ "%.2f"|format((transaction.amount_minor or 0) / 100) }}<br />
+        Merchant: {{ transaction.merchant or "Unknown" }}<br />
+        Status: {{ transaction.status }}
+      </p>
+
+      <form method="post">
+        <label>Description</label>
+        <input type="text" name="description" value="{{ transaction.merchant or '' }}" />
+
+        <label>Group</label>
+        <select name="group_id">
+          <option value="">Select a group</option>
+          {% for group in groups %}
+          <option value="{{ group.group_id }}">{{ group.group_name }}</option>
+          {% endfor %}
+        </select>
+
+        <label>Notes</label>
+        <textarea name="notes"></textarea>
+
+        <div class="actions">
+          <button type="submit" formaction="{{ request.url.path }}" formmethod="post">Post to Splitwise</button>
+        </div>
+      </form>
+    </div>
+  </body>
+</html>
