@@ -9,7 +9,14 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base
 from app.models import Transaction
-from app.services import dedupe_service, parser_service, splitwise_service, telegram_service
+from app.schemas import ReviewSubmitRequest
+from app.services import (
+    dedupe_service,
+    parser_service,
+    splitwise_service,
+    telegram_service,
+    transaction_service,
+)
 
 
 class _MockResponse:
@@ -99,7 +106,10 @@ def test_splitwise_create_expense_success(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr(splitwise_service.httpx, "post", mock_post)
     try:
-        result = splitwise_service.create_expense(db, {"description": "Dinner", "cost": 500})
+        result = splitwise_service.create_expense(
+            db,
+            {"description": "Dinner", "cost": 500, "group_id": "1", "split_mode": "equal"},
+        )
         assert result.ok is True
         assert result.expense_id == "sw123"
     finally:
@@ -123,7 +133,10 @@ def test_splitwise_create_expense_failure(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr(splitwise_service.httpx, "post", mock_post)
     try:
-        result = splitwise_service.create_expense(db, {"description": "Dinner", "cost": 500})
+        result = splitwise_service.create_expense(
+            db,
+            {"description": "Dinner", "cost": 500, "group_id": "1", "split_mode": "equal"},
+        )
         assert result.ok is False
     finally:
         db.close()
@@ -134,3 +147,39 @@ def test_splitwise_auth_url() -> None:
     url = splitwise_service.authorization_url("state123")
     assert "oauth/authorize" in url
     assert "response_type=code" in url
+
+
+def test_save_draft_upserts_open_draft() -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SessionLocal = sessionmaker(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        tx = Transaction(
+            id="tx-draft-upsert",
+            sender="HDFCBK",
+            raw_message="sample",
+            received_at=datetime.now(UTC),
+            dedupe_key="draft-upsert-k1",
+            status="needs_review",
+            source="ios_sms",
+            currency="INR",
+        )
+        db.add(tx)
+        db.commit()
+        db.refresh(tx)
+
+        payload = ReviewSubmitRequest(action="draft")
+        first = transaction_service.save_draft(db, transaction=tx, payload=payload)
+        second = transaction_service.save_draft(db, transaction=tx, payload=payload)
+
+        assert first.id == second.id
+        drafts = transaction_service.list_open_drafts(db, limit=10)
+        assert len(drafts) == 1
+    finally:
+        db.close()
+        engine.dispose()

@@ -12,3 +12,4 @@ __pycache__/
 coverage.xml
 .coverage
 *.egg-info/
+.gstack/

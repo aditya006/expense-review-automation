@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,15 +21,28 @@ from app.services import (
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
 
-def _list_drafts_text(db: Session) -> str:
-    drafts = transaction_service.list_open_drafts(db)
+def _list_drafts_text(db: Session, *, include_all: bool = False) -> str:
+    drafts = (
+        transaction_service.list_all_drafts(db)
+        if include_all
+        else transaction_service.list_open_drafts(db)
+    )
     if not drafts:
-        return "No open drafts."
+        return "No drafts found." if include_all else "No open drafts."
 
-    lines = ["Open drafts:"]
+    lines = ["All drafts:" if include_all else "Open drafts:"]
     for draft in drafts:
+        tx = transaction_service.get_transaction(db, draft.transaction_id)
         link = link_signing_service.build_review_link(draft.transaction_id)
-        lines.append(f"- {draft.transaction_id} -> {link}")
+        merchant = tx.merchant if tx and tx.merchant else "Unknown merchant"
+        amount = (
+            f"Rs {tx.amount_minor / 100:.2f}"
+            if tx and tx.amount_minor is not None
+            else "unknown"
+        )
+        lines.append(
+            f"- [{draft.draft_status}] {merchant} ({amount}) {draft.transaction_id} -> {link}"
+        )
     return "\n".join(lines)
 
 
@@ -121,11 +133,13 @@ def telegram_webhook(
         if text == "/start":
             msg = "Expense bot ready. Use /pending or /drafts."
         elif text == "/help":
-            msg = "Commands: /start, /pending, /drafts, /help"
+            msg = "Commands: /start, /pending, /drafts, /all_drafts, /help"
         elif text == "/pending":
             msg = _list_pending_text(db)
         elif text == "/drafts":
-            msg = _list_drafts_text(db)
+            msg = _list_drafts_text(db, include_all=False)
+        elif text == "/all_drafts":
+            msg = _list_drafts_text(db, include_all=True)
         else:
             msg = "Unsupported command."
 
@@ -191,16 +205,22 @@ def telegram_webhook(
             }
 
         if action == "choose_group":
-            groups = list(db.scalars(select(models.GroupCache).limit(10)).all())
+            groups = transaction_service.list_groups_with_unsettled_balance(db, limit=10)
             if not groups:
                 review_link = link_signing_service.build_review_link(tx.id)
-                msg = f"No cached groups yet. Open form to choose manually: {review_link}"
+                msg = (
+                    "No cached groups with unsettled balances. "
+                    f"Open form to choose manually: {review_link}"
+                )
                 telegram_service.send_text_message(text=msg, chat_id=chat_id)
-                telegram_service.answer_callback_query(callback_id, text="No groups cached")
+                telegram_service.answer_callback_query(
+                    callback_id,
+                    text="No unsettled groups available",
+                )
                 return {"ok": True, "message": msg}
 
             telegram_service.send_text_message(
-                text="Choose a group:",
+                text="Choose a group with unsettled balance:",
                 chat_id=chat_id,
                 reply_markup=_groups_keyboard(tx.id, groups),
             )
@@ -242,15 +262,13 @@ def telegram_webhook(
                 telegram_service.answer_callback_query(callback_id, text="Saved as draft")
                 return {"ok": False, "message": "Amount missing; saved as draft"}
 
-            members = json.loads(group.members_json)
-            participants = [str(member.get("id", member)) for member in members]
             splitwise_payload = {
                 "description": tx.merchant or "Shared expense",
+                "cost_minor": tx.amount_minor,
                 "cost": tx.amount_minor / 100,
                 "currency_code": tx.currency,
                 "group_id": group.group_id,
                 "split_mode": "equal",
-                "participant_ids": participants,
             }
 
             result = splitwise_service.create_expense(db, splitwise_payload)

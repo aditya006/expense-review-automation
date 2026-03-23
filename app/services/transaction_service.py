@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -107,11 +108,22 @@ def save_draft(
     transaction: models.Transaction,
     payload: ReviewSubmitRequest,
 ) -> models.DraftAction:
-    draft = models.DraftAction(
-        transaction_id=transaction.id,
-        draft_payload_json=payload.model_dump_json(),
-        draft_status="open",
+    draft = db.scalar(
+        select(models.DraftAction)
+        .where(
+            models.DraftAction.transaction_id == transaction.id,
+            models.DraftAction.draft_status == "open",
+        )
+        .order_by(desc(models.DraftAction.updated_at))
     )
+    if draft:
+        draft.draft_payload_json = payload.model_dump_json()
+    else:
+        draft = models.DraftAction(
+            transaction_id=transaction.id,
+            draft_payload_json=payload.model_dump_json(),
+            draft_status="open",
+        )
     transaction.status = "draft"
     db.add(draft)
     db.add(transaction)
@@ -130,6 +142,11 @@ def list_open_drafts(db: Session, limit: int = 25) -> list[models.DraftAction]:
     return list(db.scalars(stmt).all())
 
 
+def list_all_drafts(db: Session, limit: int = 100) -> list[models.DraftAction]:
+    stmt = select(models.DraftAction).order_by(desc(models.DraftAction.updated_at)).limit(limit)
+    return list(db.scalars(stmt).all())
+
+
 def list_pending_transactions(db: Session, limit: int = 25) -> list[models.Transaction]:
     stmt = (
         select(models.Transaction)
@@ -138,6 +155,45 @@ def list_pending_transactions(db: Session, limit: int = 25) -> list[models.Trans
         .limit(limit)
     )
     return list(db.scalars(stmt).all())
+
+
+def _has_unsettled_balance(members_json: str) -> bool:
+    try:
+        members = json.loads(members_json)
+    except json.JSONDecodeError:
+        return False
+
+    if not isinstance(members, list):
+        return False
+
+    for member in members:
+        if not isinstance(member, dict):
+            continue
+        balances = member.get("balance")
+        if not isinstance(balances, list):
+            continue
+        for balance in balances:
+            if not isinstance(balance, dict):
+                continue
+            raw_amount = balance.get("amount", "0")
+            try:
+                amount = Decimal(str(raw_amount))
+            except (InvalidOperation, TypeError, ValueError):
+                continue
+            if amount != 0:
+                return True
+    return False
+
+
+def list_groups_with_unsettled_balance(
+    db: Session,
+    *,
+    limit: int = 10,
+) -> list[models.GroupCache]:
+    stmt = select(models.GroupCache).order_by(desc(models.GroupCache.updated_at))
+    groups = list(db.scalars(stmt).all())
+    unsettled = [group for group in groups if _has_unsettled_balance(group.members_json)]
+    return unsettled[:limit]
 
 
 def upsert_group_cache(db: Session, *, group_id: str, group_name: str, members_json: str) -> None:

@@ -143,6 +143,7 @@ def submit_review(
 
     splitwise_payload = {
         "description": payload.description or tx.merchant or "Shared expense",
+        "cost_minor": tx.amount_minor,
         "cost": tx.amount_minor / 100,
         "currency_code": tx.currency,
         "group_id": payload.group_id,
